@@ -561,6 +561,7 @@ export class AgentGraphComponent implements OnInit {
         // Format history if available
         let historyHtml = '';
         if (d.data.agent_execution_history) {
+          console.log(d.label);
           try {
             const history = JSON.parse(d.data.agent_execution_history);
             historyHtml = `

@@ -8577,7 +8577,7 @@ export class AgentExecutionService {
       if (!processedIds.has(execution.app_insight_operation_id)) {
         nodes.push({
           id: execution.app_insight_operation_id,
-          label: `Agent ${startIndex + index + 1}`,
+          label: execution.app_insight_operation_id,
           status: execution.run_status,
           data: execution,
           order: startIndex + index + 1
