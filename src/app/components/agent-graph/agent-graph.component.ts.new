@@ -1,0 +1,357 @@
+import { Component, ElementRef, OnInit, ViewChild } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import * as d3 from 'd3';
+import { AgentExecutionService } from '../../services/agent-execution.service';
+import { GraphData, GraphNode, GraphLink } from '../../models/agent-execution.model';
+
+@Component({
+  selector: 'app-agent-graph',
+  standalone: true,
+  imports: [CommonModule],
+  template: `
+    <div class="graph-container">
+      <div class="controls">
+        <div class="pagination-info">
+          Showing nodes {{ currentStartNode }} - {{ currentEndNode }} of {{ totalNodes }}
+        </div>
+        <button *ngIf="hasMore" (click)="loadMore()" class="load-more">
+          Load More
+        </button>
+      </div>
+      <svg #svg></svg>
+      <div class="tooltip" #tooltip style="position: absolute; visibility: hidden;">
+        <div class="tooltip-header">
+          <h3>Agent Details</h3>
+          <span class="execution-order">#{{selectedNode?.order}}</span>
+        </div>
+        <p>Status: <span class="status"></span></p>
+        <p>Run On: <span class="run-on"></span></p>
+        <div class="history"></div>
+      </div>
+    </div>
+  `,
+  styles: [`
+    .graph-container {
+      width: 100%;
+      height: 700px;
+      position: relative;
+      background: #f5f5f5;
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .controls {
+      padding: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #fff;
+      border-bottom: 1px solid #eee;
+    }
+    .pagination-info {
+      font-size: 14px;
+      color: #666;
+    }
+    .load-more {
+      padding: 8px 16px;
+      background: #2196F3;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .load-more:hover {
+      background: #1976D2;
+    }
+    svg {
+      flex: 1;
+    }
+    .tooltip {
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      max-width: 300px;
+      font-size: 14px;
+    }
+    .tooltip-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .tooltip-header h3 {
+      margin: 0;
+      color: #333;
+    }
+    .execution-order {
+      background: #2196F3;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+    }
+    .status {
+      font-weight: 500;
+    }
+    .history {
+      margin-top: 10px;
+      max-height: 200px;
+      overflow-y: auto;
+      border-top: 1px solid #eee;
+      padding-top: 10px;
+    }
+  `]
+})
+export class AgentGraphComponent implements OnInit {
+  @ViewChild('svg', { static: true }) private svgElement!: ElementRef;
+  @ViewChild('tooltip', { static: true }) private tooltipElement!: ElementRef;
+
+  private svg: any;
+  private simulation: any;
+  private width = 800;
+  private height = 600;
+  private currentData: GraphData | null = null;
+  private selectedNode: GraphNode | null = null;
+
+  hasMore = false;
+  currentStartNode = 0;
+  currentEndNode = 0;
+  totalNodes = 0;
+
+  constructor(private agentExecutionService: AgentExecutionService) {}
+
+  ngOnInit() {
+    this.initializeGraph();
+    this.loadData();
+  }
+
+  private initializeGraph() {
+    this.svg = d3.select(this.svgElement.nativeElement)
+      .attr('viewBox', [0, 0, this.width, this.height]);
+
+    // Clear any existing content
+    this.svg.selectAll('*').remove();
+
+    // Add zoom behavior
+    const zoom = d3.zoom()
+      .scaleExtent([0.5, 2])
+      .on('zoom', (event) => {
+        this.svg.selectAll('g').attr('transform', event.transform);
+      });
+
+    this.svg.call(zoom);
+
+    this.simulation = d3.forceSimulation()
+      .force('link', d3.forceLink().id((d: any) => d.id).distance(100))
+      .force('charge', d3.forceManyBody().strength(-300))
+      .force('x', d3.forceX(this.width / 2))
+      .force('y', d3.forceY(this.height / 2));
+  }
+
+  private loadData() {
+    this.agentExecutionService.getDataByGroupId('3D62EDA5-A2DD-4A23-98FF-AB1B758FDD9C')
+      .subscribe(data => {
+        this.currentData = data;
+        this.updateGraph(data);
+        this.updatePaginationInfo(data);
+      });
+  }
+
+  loadMore() {
+    this.agentExecutionService.loadMore();
+  }
+
+  private updatePaginationInfo(data: GraphData) {
+    this.hasMore = data.hasMore || false;
+    this.currentStartNode = ((data.currentPage || 1) - 1) * 10 + 1;
+    this.currentEndNode = this.currentStartNode + data.nodes.length - 1;
+    this.totalNodes = (data.totalPages || 1) * 10;
+  }
+
+  private updateGraph(data: GraphData) {
+    // Clear previous graph elements
+    this.svg.selectAll('*').remove();
+
+    // Create arrow marker
+    this.svg.append('defs').append('marker')
+      .attr('id', 'arrowhead')
+      .attr('viewBox', '-0 -5 10 10')
+      .attr('refX', 25)
+      .attr('refY', 0)
+      .attr('orient', 'auto')
+      .attr('markerWidth', 8)
+      .attr('markerHeight', 8)
+      .append('path')
+      .attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', '#999');
+
+    const container = this.svg.append('g');
+
+    // Draw links
+    const links = container.append('g')
+      .selectAll('line')
+      .data(data.links)
+      .join('line')
+      .attr('stroke', '#999')
+      .attr('stroke-width', 2)
+      .attr('marker-end', 'url(#arrowhead)');
+
+    // Create node containers
+    const nodes = container.append('g')
+      .selectAll('g')
+      .data(data.nodes)
+      .join('g')
+      .attr('class', 'node')
+      .call(this.drag(this.simulation));
+
+    // Add circles to nodes
+    nodes.append('circle')
+      .attr('r', 20)
+      .attr('fill', (d: GraphNode) => this.getColorByStatus(d.status));
+
+    // Add order numbers inside circles
+    nodes.append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dy', '.3em')
+      .attr('fill', 'white')
+      .attr('font-size', '12px')
+      .text((d: GraphNode) => d.order);
+
+    // Add labels below nodes
+    nodes.append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dy', '35px')
+      .attr('font-size', '12px')
+      .text((d: GraphNode) => d.label);
+
+    // Add hover effects and tooltip
+    nodes
+      .on('mouseover', (event: any, d: GraphNode) => {
+        this.selectedNode = d;
+        const tooltip = d3.select(this.tooltipElement.nativeElement);
+        tooltip.style('visibility', 'visible')
+          .style('left', (event.pageX + 10) + 'px')
+          .style('top', (event.pageY - 10) + 'px');
+        
+        tooltip.select('.status').text(d.status)
+          .style('color', this.getColorByStatus(d.status));
+        tooltip.select('.run-on').text(d.data.run_on);
+        tooltip.select('.history').html(this.formatHistory(d.data.agent_execution_history));
+
+        // Highlight connected nodes
+        this.highlightConnections(d, links, nodes);
+      })
+      .on('mouseout', () => {
+        this.selectedNode = null;
+        d3.select(this.tooltipElement.nativeElement)
+          .style('visibility', 'hidden');
+        
+        // Remove highlights
+        links.style('stroke', '#999').style('stroke-width', 2);
+        nodes.style('opacity', 1);
+      });
+
+    // Update simulation
+    this.simulation
+      .nodes(data.nodes)
+      .on('tick', () => {
+        links
+          .attr('x1', (d: any) => d.source.x)
+          .attr('y1', (d: any) => d.source.y)
+          .attr('x2', (d: any) => d.target.x)
+          .attr('y2', (d: any) => d.target.y);
+
+        nodes
+          .attr('transform', (d: any) => `translate(${d.x},${d.y})`);
+      });
+
+    this.simulation.force('link').links(data.links);
+    this.simulation.alpha(1).restart();
+  }
+
+  private highlightConnections(node: GraphNode, links: any, nodes: any) {
+    // Dim all nodes
+    nodes.style('opacity', 0.3);
+    links.style('stroke', '#999').style('stroke-width', 2);
+
+    // Highlight connected nodes and links
+    const connectedNodes = new Set<string>();
+    connectedNodes.add(node.id);
+
+    links.each((d: GraphLink) => {
+      if (d.source.id === node.id || d.target.id === node.id) {
+        connectedNodes.add(d.source.id);
+        connectedNodes.add(d.target.id);
+      }
+    });
+
+    nodes.style('opacity', (d: GraphNode) => 
+      connectedNodes.has(d.id) ? 1 : 0.3
+    );
+
+    links
+      .style('stroke', (d: GraphLink) => 
+        (d.source.id === node.id || d.target.id === node.id) ? '#2196F3' : '#999'
+      )
+      .style('stroke-width', (d: GraphLink) => 
+        (d.source.id === node.id || d.target.id === node.id) ? 3 : 2
+      );
+  }
+
+  private getColorByStatus(status: string): string {
+    switch (status.toLowerCase()) {
+      case 'completed':
+        return '#4CAF50';
+      case 'failed':
+        return '#F44336';
+      case 'running':
+        return '#2196F3';
+      default:
+        return '#9E9E9E';
+    }
+  }
+
+  private formatHistory(historyString: string): string {
+    if (!historyString) return 'No history available';
+    
+    try {
+      const history = JSON.parse(historyString);
+      return history.map((item: any) => `
+        <div style="margin-bottom: 10px">
+          <strong>${item.AuthorName}</strong>
+          <p style="margin: 5px 0">${item.Content}</p>
+          <small style="color: #666">Model: ${item.ModelId}</small>
+        </div>
+      `).join('');
+    } catch (e) {
+      return 'Unable to parse history';
+    }
+  }
+
+  private drag(simulation: any) {
+    function dragstarted(event: any) {
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      event.subject.fx = event.subject.x;
+      event.subject.fy = event.subject.y;
+    }
+
+    function dragged(event: any) {
+      event.subject.fx = event.x;
+      event.subject.fy = event.y;
+    }
+
+    function dragended(event: any) {
+      if (!event.active) simulation.alphaTarget(0);
+      event.subject.fx = null;
+      event.subject.fy = null;
+    }
+
+    return d3.drag()
+      .on('start', dragstarted)
+      .on('drag', dragged)
+      .on('end', dragended);
+  }
+}
